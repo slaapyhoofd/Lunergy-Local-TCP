@@ -9,3 +9,9 @@ Exposes following sensors:
 
 
 Internval update can be set to about 6 to 8 seconds for automations.
+
+
+Look for the local battery IP adress in your router/AP. Input this in the setup window of the plugin.
+The port for control is 8080.
+
+Only ONE local device can control the battery at the same time.
