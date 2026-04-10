@@ -102,6 +102,8 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._commanded_direction: str = "Idle"
         self.initial_min_soc: int | None = None
         self.initial_max_soc: int | None = None
+        self.initial_work_mode: str | None = None
+        self.initial_power: int | None = None
         super().__init__(
             hass, _LOGGER,
             name=f"{DOMAIN}_{device_name}",
@@ -287,8 +289,8 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     # ── Initial state read ──────────────────────────────────────────────────
 
     async def async_read_initial_state(self) -> None:
-        """Read current SOC limits from registers 3023/3024 at startup."""
-        resp = await self.client.get_control_parameters([3023, 3024])
+        """Read current SOC limits and work mode from registers at startup."""
+        resp = await self.client.get_control_parameters([3000, 3003, 3021, 3022, 3023, 3024, 3030])
         if resp is None:
             return
         params = (
@@ -300,21 +302,58 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         if not isinstance(params, dict):
             return
 
-        min_soc = params.get("3023") or params.get(3023)
-        max_soc = params.get("3024") or params.get(3024)
+        def _int(key: str) -> int | None:
+            val = params.get(key) or params.get(int(key))
+            if val is None:
+                return None
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return None
+
+        min_soc = _int("3023")
+        max_soc = _int("3024")
+        ems_on = _int("3000")
+        ai_charge = _int("3021")
+        ai_discharge = _int("3022")
+        custom_mode = _int("3030")
 
         if min_soc is not None:
-            try:
-                self.initial_min_soc = int(min_soc)
-                _LOGGER.info("Read initial min SOC: %d%%", self.initial_min_soc)
-            except (TypeError, ValueError):
-                pass
+            self.initial_min_soc = min_soc
+            _LOGGER.info("Read initial min SOC: %d%%", min_soc)
         if max_soc is not None:
+            self.initial_max_soc = max_soc
+            _LOGGER.info("Read initial max SOC: %d%%", max_soc)
+
+        # Parse power from register 3003 time-slot string
+        # Format: "switch,start,end,power,temp,mode,field7,0,0,chargingSOC,dischargingSOC"
+        # e.g. "1,00:00,23:59,-2400,0,6,5,0,0,100,10"
+        slot_str = params.get("3003") or params.get(3003)
+        if slot_str and isinstance(slot_str, str):
             try:
-                self.initial_max_soc = int(max_soc)
-                _LOGGER.info("Read initial max SOC: %d%%", self.initial_max_soc)
-            except (TypeError, ValueError):
+                parts = slot_str.split(",")
+                if len(parts) >= 4 and parts[0] == "1":
+                    reg_power = int(parts[3])
+                    # Register sign: negative = charge, positive = discharge
+                    self.initial_power = abs(reg_power)
+                    self._commanded_power = self.initial_power
+                    _LOGGER.info("Read initial power: %d W (register value: %d)", self.initial_power, reg_power)
+            except (ValueError, IndexError):
                 pass
+
+        # Derive work mode from register state
+        from .const import MODE_SELF_CONSUMPTION, MODE_CUSTOM, MODE_DISABLED
+        if ems_on == 0:
+            self.initial_work_mode = MODE_DISABLED
+        elif custom_mode == 1:
+            self.initial_work_mode = MODE_CUSTOM
+        elif ai_charge == 1 or ai_discharge == 1:
+            self.initial_work_mode = MODE_SELF_CONSUMPTION
+        else:
+            self.initial_work_mode = MODE_CUSTOM
+
+        if self.initial_work_mode:
+            _LOGGER.info("Read initial work mode: %s", self.initial_work_mode)
 
     # ── DeviceManagement probe ────────────────────────────────────────────────
 

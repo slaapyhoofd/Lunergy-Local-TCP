@@ -45,7 +45,7 @@ class LunergyWorkModeSelect(CoordinatorEntity[LunergyLocalCoordinator], SelectEn
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_work_mode"
-        self._current_mode: str | None = None
+        self._current_mode: str | None = coordinator.initial_work_mode
 
     @property
     def device_info(self) -> DeviceInfo:

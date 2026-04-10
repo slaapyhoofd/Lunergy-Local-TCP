@@ -40,7 +40,7 @@ class LunergyPowerSlider(CoordinatorEntity[LunergyLocalCoordinator], NumberEntit
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_power_setpoint"
-        self._commanded: float = 0
+        self._commanded: float = coordinator.initial_power if coordinator.initial_power is not None else 0
 
     @property
     def device_info(self) -> DeviceInfo:

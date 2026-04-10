@@ -221,6 +221,7 @@ class LunergyBatteryStatusSensor(CoordinatorEntity[LunergyLocalCoordinator], Sen
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_battery_status"
+        self._last_status: str = "Idle"
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -228,18 +229,24 @@ class LunergyBatteryStatusSensor(CoordinatorEntity[LunergyLocalCoordinator], Sen
 
     @property
     def native_value(self) -> str:
-        charge = self.coordinator.get_value("battery_charging_power") or 0
-        discharge = self.coordinator.get_value("battery_discharging_power") or 0
+        charge = self.coordinator.get_value("battery_charging_power")
+        discharge = self.coordinator.get_value("battery_discharging_power")
+        # If both are None, keep last known status (transient poll failure)
+        if charge is None and discharge is None:
+            return self._last_status
         try:
-            charge_f = float(charge)
-            discharge_f = float(discharge)
+            charge_f = float(charge or 0)
+            discharge_f = float(discharge or 0)
         except (TypeError, ValueError):
-            return "Idle"
+            return self._last_status
         if charge_f > 0:
-            return "Charging"
-        if discharge_f > 0:
-            return "Discharging"
-        return "Idle"
+            status = "Charging"
+        elif discharge_f > 0:
+            status = "Discharging"
+        else:
+            status = "Idle"
+        self._last_status = status
+        return status
 
 
 # ── Firmware Version (diagnostic) ─────────────────────────────────────────────
