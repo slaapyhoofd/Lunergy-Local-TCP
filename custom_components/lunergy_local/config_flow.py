@@ -81,6 +81,9 @@ class LunergyLocalOptionsFlow(config_entries.OptionsFlow):
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         if user_input is not None:
+            new_options = {
+                CONF_EXTENDED_POWER: user_input.get(CONF_EXTENDED_POWER, False),
+            }
             self.hass.config_entries.async_update_entry(
                 self._entry,
                 data={
@@ -88,12 +91,8 @@ class LunergyLocalOptionsFlow(config_entries.OptionsFlow):
                     CONF_PORT: user_input[CONF_PORT],
                     CONF_NAME: user_input[CONF_NAME].strip(),
                 },
-                options={
-                    CONF_EXTENDED_POWER: user_input.get(CONF_EXTENDED_POWER, False),
-                },
             )
-            await self.hass.config_entries.async_reload(self._entry.entry_id)
-            return self.async_create_entry(title="", data={})
+            return self.async_create_entry(title="", data=new_options)
 
         current = self._entry.data
         current_options = self._entry.options
