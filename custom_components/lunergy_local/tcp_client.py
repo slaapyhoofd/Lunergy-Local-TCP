@@ -83,20 +83,23 @@ class LunergyBatteryClient:
                 return None
 
     async def _set(self, command: str, extra: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
-        """Fire-and-forget: send the command and release the lock immediately."""
+        """Send SET command and wait for acknowledgement from the battery."""
         payload: Dict[str, Any] = {
             "Set": command,
             "SerialNumber": self._next_serial(),
             "CommandSource": "HA",
             **(extra or {}),
         }
+        _LOGGER.warning("TX SET → %s", json.dumps(payload))
         async with self._io_lock:
             try:
                 reader, writer = await self._manager.get_reader_writer()
                 self._connected = True
                 writer.write((json.dumps(payload) + "\n").encode("utf-8"))
                 await writer.drain()
-                return {"sent": True}
+                response = await self._read_json(reader)
+                _LOGGER.warning("RX SET ← %s", response)
+                return response
             except (ConnectionResetError, OSError, asyncio.IncompleteReadError) as exc:
                 _LOGGER.warning("SET connection error: %s — reconnecting after 2s cooldown", exc)
                 self._connected = False

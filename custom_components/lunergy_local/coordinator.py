@@ -209,28 +209,41 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 f"{_CHARGING_SOC},{_DISCHARGING_SOC}"
             )
 
+        # Ensure custom mode is active: EMS on, AI off, custom on
         payload = {
-            "3000": "1",
-            "3003": slot1,
+            "3000": "1",      # EMS enable
+            "3021": "0",      # AI smart charge OFF
+            "3022": "0",      # AI smart discharge OFF
+            "3030": "1",      # Custom mode ON
+            "3003": slot1,    # Schedule slot
         }
 
-        _LOGGER.info(
-            "Lunergy SET power %+d W → reg_power=%+d → 3003=%r",
-            power_w, reg_power, slot1,
+        _LOGGER.warning(
+            "Lunergy SET power %+d W → reg_power=%+d → 3003=%r  (full payload: %s)",
+            power_w, reg_power, slot1, payload,
         )
 
         resp = await self.client.set_control_parameters(payload)
         self._last_set_response = resp
-        return resp is not None
+
+        if resp is None:
+            _LOGGER.warning("Lunergy SET power → no response (connection error)")
+            return False
+
+        _LOGGER.warning("Lunergy SET power → response: %s", resp)
+        return True
 
     # ── Work mode & SOC ────────────────────────────────────────────────────────
 
     async def async_set_work_mode(self, mode: str) -> bool:
         registers = MODE_REGISTERS.get(mode)
         if registers is None:
+            _LOGGER.warning("Lunergy SET work_mode: unknown mode %r", mode)
             return False
+        _LOGGER.warning("Lunergy SET work_mode %r → registers=%s", mode, registers)
         resp = await self.client.set_control_parameters(registers)
         self._last_set_response = resp
+        _LOGGER.warning("Lunergy SET work_mode → response: %s", resp)
         return resp is not None
 
     async def async_set_min_soc(self, value: int) -> bool:
