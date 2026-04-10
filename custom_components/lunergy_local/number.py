@@ -1,72 +1,152 @@
-"""Number platform – Power Setpoint only."""
+"""Number platform – Power Slider, Min SOC, Max SOC."""
 from __future__ import annotations
 import logging
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPower
+from homeassistant.const import PERCENTAGE, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from .const import CONF_HOST, CONF_NAME, CONF_PORT, DOMAIN, MAX_BATTERY_POWER_W
+from .const import DOMAIN, MAX_BATTERY_POWER_W
 from .coordinator import LunergyLocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry,
                             async_add_entities: AddEntitiesCallback) -> None:
     coordinator: LunergyLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([LunergyPowerSetpoint(coordinator, config_entry)])
+    async_add_entities([
+        LunergyPowerSlider(coordinator, config_entry),
+        LunergyMinSoc(coordinator, config_entry),
+        LunergyMaxSoc(coordinator, config_entry),
+    ])
 
-class LunergyPowerSetpoint(CoordinatorEntity[LunergyLocalCoordinator], NumberEntity):
-    """Battery power setpoint: +2400 W = full charge, -2400 W = full discharge."""
+
+class LunergyPowerSlider(CoordinatorEntity[LunergyLocalCoordinator], NumberEntity):
+    """Battery power slider: 0–2400 W. Direction is set via the Battery Direction select."""
     _attr_has_entity_name = True
-    _attr_name = "Power Setpoint"
+    _attr_name = "Battery Power"
     _attr_icon = "mdi:battery-sync"
     _attr_device_class = NumberDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
-    _attr_native_min_value = -MAX_BATTERY_POWER_W
-    _attr_native_max_value =  MAX_BATTERY_POWER_W
-    _attr_native_step = 1
-    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = 0
+    _attr_native_max_value = MAX_BATTERY_POWER_W
+    _attr_native_step = 100
+    _attr_mode = NumberMode.SLIDER
 
     def __init__(self, coordinator, config_entry):
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_power_setpoint"
+        self._commanded: float = 0
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def native_value(self) -> float:
+        return self._commanded
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
+
+    async def async_set_native_value(self, value: float) -> None:
+        power_w = int(value)
+        self._commanded = power_w
+        # Store on coordinator so direction select can read it
+        self.coordinator._commanded_power = power_w
+
+        # Get current direction from coordinator
+        direction = getattr(self.coordinator, "_commanded_direction", "Idle")
+        if direction == "Idle" and power_w > 0:
+            direction = "Charge"
+
+        success = await self.coordinator.async_set_battery_control(direction, power_w)
+        if success:
+            self.async_write_ha_state()
+        else:
+            _LOGGER.warning("Failed to set power to %s W", power_w)
+
+
+class LunergyMinSoc(CoordinatorEntity[LunergyLocalCoordinator], NumberEntity):
+    """Minimum discharge SOC (register 3023)."""
+    _attr_has_entity_name = True
+    _attr_name = "Discharge Limit"
+    _attr_icon = "mdi:battery-arrow-down"
+    _attr_device_class = NumberDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_native_min_value = 5
+    _attr_native_max_value = 50
+    _attr_native_step = 5
+    _attr_mode = NumberMode.SLIDER
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_min_soc"
         self._commanded: float | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._config_entry.data[CONF_HOST]}:{self._config_entry.data[CONF_PORT]}")},
-            name=self._config_entry.data[CONF_NAME],
-            manufacturer="Lunergy", model="Hub 2400 AC",
-        )
+        return self.coordinator.device_info
 
     @property
     def native_value(self) -> float | None:
-        if self._commanded is None:
-            return None
-        v = self._commanded
-        return int(v) if v == int(v) else v
+        return self._commanded
 
     @property
     def available(self) -> bool:
         return self.coordinator.last_update_success or self._commanded is not None
 
-    @property
-    def extra_state_attributes(self) -> dict:
-        attrs = {"last_set_response": getattr(self.coordinator, "_last_set_response", "never sent")}
-        scan = getattr(self.coordinator, "_register_scan", None)
-        if scan:
-            attrs["register_scan"] = scan.get("non_empty_registers", scan)
-        return attrs
-
     async def async_set_native_value(self, value: float) -> None:
-        success = await self.coordinator.async_set_power_setpoint(value)
+        soc = int(value)
+        success = await self.coordinator.async_set_min_soc(soc)
         if success:
-            self._commanded = value
+            self._commanded = soc
             self.async_write_ha_state()
         else:
-            _LOGGER.warning("Failed to set power setpoint to %s W", value)
+            _LOGGER.warning("Failed to set min SOC to %s%%", soc)
+
+
+class LunergyMaxSoc(CoordinatorEntity[LunergyLocalCoordinator], NumberEntity):
+    """Maximum charge SOC (register 3024)."""
+    _attr_has_entity_name = True
+    _attr_name = "Charge Limit"
+    _attr_icon = "mdi:battery-arrow-up"
+    _attr_device_class = NumberDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_native_min_value = 50
+    _attr_native_max_value = 100
+    _attr_native_step = 5
+    _attr_mode = NumberMode.SLIDER
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_max_soc"
+        self._commanded: float | None = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def native_value(self) -> float | None:
+        return self._commanded
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success or self._commanded is not None
+
+    async def async_set_native_value(self, value: float) -> None:
+        soc = int(value)
+        success = await self.coordinator.async_set_max_soc(soc)
+        if success:
+            self._commanded = soc
+            self.async_write_ha_state()
+        else:
+            _LOGGER.warning("Failed to set max SOC to %s%%", soc)

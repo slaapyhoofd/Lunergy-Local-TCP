@@ -1,35 +1,79 @@
-"""Sensor platform – AC Charging Power, Battery Discharging Power, Battery SOC."""
+"""Sensor platform for Lunergy Local Battery."""
 from __future__ import annotations
+
+import logging
+from datetime import datetime
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfPower
-from homeassistant.core import HomeAssistant
+from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util.dt import utcnow
+
 from .const import CONF_HOST, CONF_NAME, CONF_PORT, DOMAIN
 from .coordinator import LunergyLocalCoordinator
 
+_LOGGER = logging.getLogger(__name__)
+
+# ── Standard power/measurement sensors ────────────────────────────────────────
 _SENSORS = [
-    #  (key,                        name,                        canonical_key,                unit,             icon,                          is_power)
-    ("ac_charging_power",           "AC Charging Power",         "ac_charging_power",          UnitOfPower.WATT, "mdi:power-plug",              True),
-    ("battery_discharging_power",   "Battery Discharging Power", "battery_discharging_power",  UnitOfPower.WATT, "mdi:battery-arrow-down",      True),
-    ("battery_soc",                 "Battery SOC",               "battery_soc",                PERCENTAGE,       "mdi:battery",                 False),
-    ("pv_power",                    "PV Power",                  "pv_power",                   UnitOfPower.WATT, "mdi:solar-power",             True),
-    ("pv_charging_power",           "PV Charging Power",         "pv_charging_power",          UnitOfPower.WATT, "mdi:solar-panel",             True),
-    ("grid_power",                  "Grid / Meter Power",        "grid_power",                 UnitOfPower.WATT, "mdi:transmission-tower",      True),
+    #  (key,                        name,                        canonical_key,                unit,             icon,                            is_power)
+    ("ac_charging_power",           "AC Charging Power",         "ac_charging_power",          UnitOfPower.WATT, "mdi:power-plug",                True),
+    ("battery_discharging_power",   "Battery Discharging Power", "battery_discharging_power",  UnitOfPower.WATT, "mdi:battery-arrow-down",        True),
+    ("battery_soc",                 "Battery SOC",               "battery_soc",                PERCENTAGE,       "mdi:battery",                   False),
+    ("pv_power",                    "PV Power",                  "pv_power",                   UnitOfPower.WATT, "mdi:solar-power",               True),
+    ("pv_charging_power",           "PV Charging Power",         "pv_charging_power",          UnitOfPower.WATT, "mdi:solar-panel",               True),
+    ("grid_power",                  "Grid / Meter Power",        "grid_power",                 UnitOfPower.WATT, "mdi:transmission-tower",        True),
     ("grid_export_power",           "Grid Export Power",         "grid_export_power",          UnitOfPower.WATT, "mdi:transmission-tower-export", True),
-    ("backup_power",                "Backup Power",              "backup_power",               UnitOfPower.WATT, "mdi:power-plug-battery",      True),
-    ("home_consumption",            "Home Consumption",          "home_consumption",           UnitOfPower.WATT, "mdi:home-lightning-bolt",     True),
+    ("backup_power",                "Backup Power",              "backup_power",               UnitOfPower.WATT, "mdi:power-plug-battery",        True),
+    ("home_consumption",            "Home Consumption",          "home_consumption",           UnitOfPower.WATT, "mdi:home-lightning-bolt",       True),
 ]
+
+# ── Energy counter definitions ────────────────────────────────────────────────
+# Each entry: (key, name, list_of_canonical_power_keys, icon)
+_ENERGY_SENSORS = [
+    ("energy_charged",    "Energy Charged",    ["ac_charging_power", "pv_charging_power"], "mdi:battery-charging"),
+    ("energy_discharged", "Energy Discharged",  ["battery_discharging_power"],              "mdi:battery-arrow-down-outline"),
+]
+
+_MAX_GAP_SECONDS = 60  # Skip accumulation if time gap exceeds this (avoids phantom spikes)
+
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry,
                             async_add_entities: AddEntitiesCallback) -> None:
     coordinator: LunergyLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([
-        LunergySensor(coordinator, config_entry, key, name, canonical_key, unit, icon, is_power)
-        for key, name, canonical_key, unit, icon, is_power in _SENSORS
-    ])
+    entities: list[SensorEntity] = []
+
+    # Standard power/measurement sensors
+    for key, name, canonical_key, unit, icon, is_power in _SENSORS:
+        entities.append(
+            LunergySensor(coordinator, config_entry, key, name, canonical_key, unit, icon, is_power)
+        )
+
+    # Energy counter sensors (Riemann sum)
+    for key, name, power_keys, icon in _ENERGY_SENSORS:
+        entities.append(
+            LunergyEnergySensor(coordinator, config_entry, key, name, power_keys, icon)
+        )
+
+    # Battery Power (signed) and Battery Status
+    entities.append(LunergyBatteryPowerSensor(coordinator, config_entry))
+    entities.append(LunergyBatteryStatusSensor(coordinator, config_entry))
+
+    # Firmware version (diagnostic, only if DeviceManagement probe succeeded)
+    if coordinator.firmware_version is not None:
+        entities.append(LunergyFirmwareSensor(coordinator, config_entry))
+
+    async_add_entities(entities)
+
+
+def _device_info(config_entry: ConfigEntry, coordinator: LunergyLocalCoordinator) -> DeviceInfo:
+    return coordinator.device_info
+
 
 class LunergySensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
     _attr_has_entity_name = True
@@ -49,11 +93,7 @@ class LunergySensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._config_entry.data[CONF_HOST]}:{self._config_entry.data[CONF_PORT]}")},
-            name=self._config_entry.data[CONF_NAME],
-            manufacturer="Lunergy", model="Hub 2400 AC",
-        )
+        return self.coordinator.device_info
 
     @property
     def native_value(self):
@@ -66,3 +106,161 @@ class LunergySensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         return self._last_value is not None or self.coordinator.last_update_success
+
+
+# ── Energy counter (Riemann sum + RestoreEntity) ──────────────────────────────
+
+class LunergyEnergySensor(CoordinatorEntity[LunergyLocalCoordinator], RestoreEntity, SensorEntity):
+    """Accumulated energy (kWh) computed by integrating power over time."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, coordinator, config_entry, key, name, power_keys, icon):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._power_keys = power_keys
+        self._attr_unique_id = f"{config_entry.entry_id}_{key}"
+        self._attr_name = name
+        self._attr_icon = icon
+        self._accumulated_kwh: float = 0.0
+        self._last_update_time: datetime | None = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def native_value(self) -> float:
+        return round(self._accumulated_kwh, 3)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore accumulated kWh from last known state."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in ("unknown", "unavailable"):
+            try:
+                self._accumulated_kwh = float(last_state.state)
+            except (TypeError, ValueError):
+                self._accumulated_kwh = 0.0
+        # Leave _last_update_time = None so first poll sets baseline without accumulating
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Accumulate energy on each coordinator poll."""
+        now = utcnow()
+
+        # Sum power from all source keys
+        total_power_w = 0.0
+        any_valid = False
+        for key in self._power_keys:
+            val = self.coordinator.get_value(key)
+            if val is not None:
+                try:
+                    total_power_w += float(val)
+                    any_valid = True
+                except (TypeError, ValueError):
+                    pass
+
+        if any_valid and self._last_update_time is not None:
+            delta_seconds = (now - self._last_update_time).total_seconds()
+            if 0 < delta_seconds <= _MAX_GAP_SECONDS:
+                delta_kwh = total_power_w * delta_seconds / 3_600_000
+                self._accumulated_kwh += delta_kwh
+
+        if any_valid:
+            self._last_update_time = now
+
+        self.async_write_ha_state()
+
+
+# ── Battery Power (signed) ────────────────────────────────────────────────────
+
+class LunergyBatteryPowerSensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
+    """Single signed value: positive = charging, negative = discharging."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Battery Power"
+    _attr_icon = "mdi:battery-sync"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_battery_power"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def native_value(self) -> float | None:
+        charge = self.coordinator.get_value("battery_charging_power") or 0
+        discharge = self.coordinator.get_value("battery_discharging_power") or 0
+        try:
+            return round(float(charge) - float(discharge), 1)
+        except (TypeError, ValueError):
+            return None
+
+
+# ── Battery Status (text) ─────────────────────────────────────────────────────
+
+class LunergyBatteryStatusSensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
+    """Derived text status: Charging / Discharging / Idle."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Battery Status"
+    _attr_icon = "mdi:battery-heart-variant"
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_battery_status"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def native_value(self) -> str:
+        charge = self.coordinator.get_value("battery_charging_power") or 0
+        discharge = self.coordinator.get_value("battery_discharging_power") or 0
+        try:
+            charge_f = float(charge)
+            discharge_f = float(discharge)
+        except (TypeError, ValueError):
+            return "Idle"
+        if charge_f > 0:
+            return "Charging"
+        if discharge_f > 0:
+            return "Discharging"
+        return "Idle"
+
+
+# ── Firmware Version (diagnostic) ─────────────────────────────────────────────
+
+class LunergyFirmwareSensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
+    """Firmware version from DeviceManagement probe (Sunpura only)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Firmware Version"
+    _attr_icon = "mdi:chip"
+    _attr_entity_category = "diagnostic"
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_firmware_version"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.firmware_version

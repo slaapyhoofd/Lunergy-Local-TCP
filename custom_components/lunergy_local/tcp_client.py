@@ -52,6 +52,45 @@ class LunergyBatteryClient:
     async def get_ems_register(self, reg_addr: Any) -> Optional[Dict[str, Any]]:
         return await self._get("DeviceManagement", {"RegDeviceManagementAddr": reg_addr})
 
+    async def get_device_management_info(self) -> Optional[Dict[str, Any]]:
+        """Read serial, firmware, model from DeviceManagement registers.
+
+        Works on Sunpura; times out on Lunergy (returns None gracefully).
+        Uses a short 3-second timeout to avoid blocking setup.
+        """
+        payload: Dict[str, Any] = {
+            "Get": "DeviceManagement",
+            "SerialNumber": self._next_serial(),
+            "CommandSource": "HA",
+            "RegDeviceManagementAddr": [2, 8, 9, 20, 21],
+        }
+        async with self._io_lock:
+            try:
+                reader, writer = await self._manager.get_reader_writer()
+                self._connected = True
+                writer.write((json.dumps(payload) + "\n").encode("utf-8"))
+                await writer.drain()
+                # Short timeout — Lunergy doesn't respond to this command
+                buffer = b""
+                async with asyncio.timeout(3):
+                    while True:
+                        chunk = await reader.read(4096)
+                        if not chunk:
+                            return None
+                        buffer += chunk
+                        try:
+                            return json.loads(buffer.decode("utf-8"))
+                        except json.JSONDecodeError:
+                            await asyncio.sleep(0.05)
+            except TimeoutError:
+                _LOGGER.debug("DeviceManagement probe timed out (expected on Lunergy)")
+                return None
+            except (ConnectionResetError, OSError, asyncio.IncompleteReadError):
+                return None
+            except Exception as exc:
+                _LOGGER.debug("DeviceManagement probe error: %s", exc)
+                return None
+
     # ── Low-level ──────────────────────────────────────────────────────────
 
     def _next_serial(self) -> int:

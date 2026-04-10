@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_HOST, CONF_NAME, CONF_PORT, DOMAIN, WORK_MODES
+from .const import DOMAIN, WORK_MODES
 from .coordinator import LunergyLocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,7 +23,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: LunergyLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([LunergyWorkModeSelect(coordinator, config_entry)])
+    async_add_entities([
+        LunergyWorkModeSelect(coordinator, config_entry),
+        LunergyBatteryDirection(coordinator, config_entry),
+    ])
 
 
 class LunergyWorkModeSelect(CoordinatorEntity[LunergyLocalCoordinator], SelectEntity):
@@ -46,15 +49,7 @@ class LunergyWorkModeSelect(CoordinatorEntity[LunergyLocalCoordinator], SelectEn
 
     @property
     def device_info(self) -> DeviceInfo:
-        host = self._config_entry.data[CONF_HOST]
-        port = self._config_entry.data[CONF_PORT]
-        name = self._config_entry.data[CONF_NAME]
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{host}:{port}")},
-            name=name,
-            manufacturer="Lunergy",
-            model="Hub 2400 AC",
-        )
+        return self.coordinator.device_info
 
     @property
     def current_option(self) -> str | None:
@@ -72,3 +67,47 @@ class LunergyWorkModeSelect(CoordinatorEntity[LunergyLocalCoordinator], SelectEn
             self.async_write_ha_state()
         else:
             _LOGGER.error("Failed to set work mode to '%s'", option)
+
+
+DIRECTION_OPTIONS = ["Charge", "Discharge", "Idle"]
+
+
+class LunergyBatteryDirection(CoordinatorEntity[LunergyLocalCoordinator], SelectEntity):
+    """Select charge direction. Automatically switches to Custom mode when Charge/Discharge is selected."""
+
+    _attr_icon = "mdi:battery-charging-wireless"
+    _attr_has_entity_name = True
+    _attr_name = "Battery Direction"
+    _attr_options = DIRECTION_OPTIONS
+
+    def __init__(self, coordinator: LunergyLocalCoordinator, config_entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_battery_direction"
+        self._current_direction: str = "Idle"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def current_option(self) -> str:
+        return self._current_direction
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
+
+    async def async_select_option(self, option: str) -> None:
+        _LOGGER.info("User selected battery direction: %s", option)
+        # Use the current commanded power from coordinator (default 0 for Idle)
+        power = getattr(self.coordinator, "_commanded_power", 0) or 0
+        if option == "Idle":
+            power = 0
+        success = await self.coordinator.async_set_battery_control(option, power)
+        if success:
+            self._current_direction = option
+            self.coordinator._commanded_direction = option
+            self.async_write_ha_state()
+        else:
+            _LOGGER.error("Failed to set battery direction to '%s'", option)

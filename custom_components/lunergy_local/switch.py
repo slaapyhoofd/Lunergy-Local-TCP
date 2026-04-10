@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_HOST, CONF_NAME, CONF_PORT, DOMAIN, REG_EMS_ENABLE
+from .const import DOMAIN, REG_EMS_ENABLE
 from .coordinator import LunergyLocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,15 +45,7 @@ class LunergyEmsSwitch(CoordinatorEntity[LunergyLocalCoordinator], SwitchEntity)
 
     @property
     def device_info(self) -> DeviceInfo:
-        host = self._config_entry.data[CONF_HOST]
-        port = self._config_entry.data[CONF_PORT]
-        name = self._config_entry.data[CONF_NAME]
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{host}:{port}")},
-            name=name,
-            manufacturer="Lunergy",
-            model="Hub 2400 AC",
-        )
+        return self.coordinator.device_info
 
     @property
     def is_on(self) -> bool | None:

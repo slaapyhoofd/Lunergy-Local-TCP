@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -19,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # ── Unified field mapping ─────────────────────────────────────────────────────
 # Maps canonical sensor keys to (source, field_name, scale) tuples.
-# Storage_list is tried first (Lunergy), then SSumInfoList (Lunergy fallback).
+# Storage_list is tried first (Sunpura), then SSumInfoList (Lunergy fallback).
 # Storage_list power values are 10x scaled; SSumInfoList values are in watts.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -92,10 +93,13 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.client = client
         self.device_name = device_name
         self._last_set_response: Any = "never sent"
-        self._register_scan: Any = None
         self._consecutive_failures: int = 0
         self._last_good_data: Dict[str, Any] | None = None
         self._failure_tolerance: int = 5
+        self.device_serial: str | None = None
+        self.firmware_version: str | None = None
+        self._commanded_power: int = 0
+        self._commanded_direction: str = "Idle"
         super().__init__(
             hass, _LOGGER,
             name=f"{DOMAIN}_{device_name}",
@@ -130,6 +134,21 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._consecutive_failures = 0
         self._last_good_data = raw
         return raw
+
+    # ── Device info ───────────────────────────────────────────────────────────
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        identifier = self.device_serial or f"{self.client.host}:{self.client.port}"
+        info = DeviceInfo(
+            identifiers={(DOMAIN, identifier)},
+            name=self.device_name,
+            manufacturer="Lunergy",
+            model="Hub 2400 AC",
+        )
+        if self.firmware_version:
+            info["sw_version"] = self.firmware_version
+        return info
 
     # ── Accessors ─────────────────────────────────────────────────────────────
 
@@ -166,7 +185,7 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     def get_value(self, canonical_key: str, default: Any = None) -> Any:
         """Get a sensor value using the canonical key.
 
-        Tries Storage_list first (Lunergy), falls back to SSumInfoList (Lunergy).
+        Tries Storage_list first (Sunpura), falls back to SSumInfoList (Lunergy).
         Applies the correct scaling per source automatically.
         """
         entries = _FIELD_MAP.get(canonical_key)
@@ -182,34 +201,27 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     continue
         return default
 
-    # ── Power setpoint ─────────────────────────────────────────────────────────
+    # ── Battery control (direction + power) ───────────────────────────────────
 
-    async def async_set_power_setpoint(self, watts: float) -> bool:
-        """Write the power setpoint to register 3003 (controlTime1).
+    async def async_set_battery_control(self, direction: str, power_w: int) -> bool:
+        """Write battery control registers for the given direction and power.
 
-        Sign convention (confirmed empirically):
-            UI +2400 W = charge    → register value -2400
-            UI -2400 W = discharge → register value +2400
+        Direction: "Charge", "Discharge", or "Idle".
+        Power: absolute watts (0-2400).
         """
-        power_w = int(watts)
-        reg_power = -power_w
-
-        # Auto-detect firmware variant from poll data:
-        #   Storage_list present → Sunpura (field7=5)
-        #   Only SSumInfoList   → Lunergy (field7=4)
+        # Auto-detect firmware variant from poll data
         has_storage = bool(self.data and self.data.get("Storage_list"))
         field7 = 5 if has_storage else 4
 
-        if power_w == 0:
+        if direction == "Idle" or power_w == 0:
             slot1 = _SLOT_DISABLED
         else:
-            # Slot format: switch,start,end,power,temp,mode,field7,0,0,chargingSOC,dischargingSOC
+            reg_power = -power_w if direction == "Charge" else power_w
             slot1 = (
                 f"1,00:00,23:59,{reg_power},0,6,{field7},0,0,"
                 f"{_CHARGING_SOC},{_DISCHARGING_SOC}"
             )
 
-        # Ensure custom mode is fully active
         payload = {
             "3000": "1",      # EMS enable
             "3020": "6",      # Energy mode = custom/manual
@@ -220,19 +232,31 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         }
 
         _LOGGER.info(
-            "SET power %+d W → reg_power=%+d → 3003=%r",
-            power_w, reg_power, slot1,
+            "SET battery_control direction=%s power=%d W → 3003=%r",
+            direction, power_w, slot1,
         )
 
         resp = await self.client.set_control_parameters(payload)
         self._last_set_response = resp
 
         if resp is None:
-            _LOGGER.warning("SET power %+d W failed — no response from battery", power_w)
+            _LOGGER.warning("SET battery_control failed — no response from battery")
             return False
 
-        _LOGGER.debug("SET power response: %s", resp)
+        _LOGGER.debug("SET battery_control response: %s", resp)
         return True
+
+    # ── Legacy power setpoint (kept for automation backward compat) ───────────
+
+    async def async_set_power_setpoint(self, watts: float) -> bool:
+        """Write the power setpoint. Thin wrapper around async_set_battery_control."""
+        power_w = int(watts)
+        if power_w == 0:
+            return await self.async_set_battery_control("Idle", 0)
+        elif power_w > 0:
+            return await self.async_set_battery_control("Charge", power_w)
+        else:
+            return await self.async_set_battery_control("Discharge", abs(power_w))
 
     # ── Work mode & SOC ────────────────────────────────────────────────────────
 
@@ -254,37 +278,34 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         return resp is not None
 
     async def async_set_max_soc(self, value: int) -> bool:
-        resp = await self.client.set_control_parameters({"3002": str(value)})
+        resp = await self.client.set_control_parameters({"3024": str(value)})
         self._last_set_response = resp
         return resp is not None
 
-    # ── Register scan ──────────────────────────────────────────────────────────
+    # ── DeviceManagement probe ────────────────────────────────────────────────
 
-    async def async_scan_power_registers(self) -> None:
-        all_addrs = list(range(3000, 3150)) + list(range(4000, 4050))
-        batch_size = 10
-        all_results: dict = {}
-        raw_batches: list = []
+    async def async_probe_device_management(self) -> None:
+        """Try to read serial/firmware via DeviceManagement (works on Sunpura, times out on Lunergy)."""
+        info = await self.client.get_device_management_info()
+        if info is None:
+            _LOGGER.debug("DeviceManagement probe returned nothing (expected on Lunergy)")
+            return
 
-        for i in range(0, len(all_addrs), batch_size):
-            batch = all_addrs[i:i + batch_size]
-            resp = await self.client.get_control_parameters(batch)
-            if resp is None:
-                continue
-            raw_batches.append(resp)
-            params = (resp.get("ControlInfo")
-                      or resp.get("GetParameters")
-                      or resp.get("Parameters")
-                      or resp.get("SetParameters")
-                      or {})
-            if isinstance(params, dict):
-                for addr, val in params.items():
-                    str_val = str(val).strip()
-                    if str_val not in ("", "0", "None"):
-                        all_results[addr] = str_val
+        params = (
+            info.get("DeviceManagementInfo")
+            or info.get("Parameters")
+            or info.get("GetParameters")
+            or {}
+        )
+        if not isinstance(params, dict):
+            return
 
-        self._register_scan = {
-            "non_empty_registers": all_results,
-            "all_batches": raw_batches,
-        }
-        _LOGGER.info("Lunergy register scan: %s", all_results)
+        serial = params.get("8") or params.get(8)
+        firmware = params.get("21") or params.get(21)
+
+        if serial:
+            self.device_serial = str(serial).strip()
+            _LOGGER.info("DeviceManagement serial: %s", self.device_serial)
+        if firmware:
+            self.firmware_version = str(firmware).strip()
+            _LOGGER.info("DeviceManagement firmware: %s", self.firmware_version)
