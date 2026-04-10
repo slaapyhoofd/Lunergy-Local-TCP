@@ -2,16 +2,16 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to Sunpura Battery",
-        "description": "Enter the local network details for your Sunpura EMS battery hub. The battery must be reachable at the given IP before you can continue.",
+        "title": "Connect to Lunergy Battery",
+        "description": "Enter the local network details for your Lunergy EMS battery hub. The battery must be reachable at the given IP before you can continue.",
         "data": {
           "host": "IP Address",
           "port": "TCP Port",
           "name": "Device Name"
         },
         "data_description": {
-          "host": "Static local IP of your battery (e.g. 192.168.0.1)",
-          "port": "TCP port the battery listens on (typically 6001 or 8001)",
+          "host": "Static local IP of your battery (e.g. 192.168.0.100)",
+          "port": "TCP port the battery listens on (typically 8080)",
           "name": "Friendly name shown in Home Assistant"
         }
       }
@@ -27,7 +27,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Reconfigure Sunpura Battery",
+        "title": "Reconfigure Lunergy Battery",
         "description": "Update the connection details. Home Assistant will reconnect immediately.",
         "data": {
           "host": "IP Address",

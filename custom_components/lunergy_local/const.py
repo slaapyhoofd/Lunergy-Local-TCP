@@ -1,6 +1,6 @@
-"""Constants for the Sunpura Local Battery integration."""
+"""Constants for the Lunergy Local Battery integration."""
 
-DOMAIN = "sunpura_local"
+DOMAIN = "lunergy_local"
 
 # Config entry keys
 CONF_HOST = "host"
@@ -10,7 +10,7 @@ CONF_NAME = "name"
 # Default connection values
 DEFAULT_HOST = "192.168.0.1"
 DEFAULT_PORT = 8080
-DEFAULT_NAME = "Sunpura Battery"
+DEFAULT_NAME = "Lunergy Battery"
 DEFAULT_TIMEOUT = 5  # seconds
 POLL_INTERVAL = 2           # seconds – change this to update faster/slower
 MIN_POLL_INTERVAL = 2       # seconds – hard floor to avoid flooding the device

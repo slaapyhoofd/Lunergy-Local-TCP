@@ -1,10 +1,10 @@
-"""DataUpdateCoordinator for the Sunpura Local Battery integration."""
+"""DataUpdateCoordinator for the Lunergy Local Battery integration."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -13,9 +13,56 @@ from .const import (
     DOMAIN, POLL_INTERVAL, MIN_POLL_INTERVAL, MAX_BATTERY_POWER_W,
     MODE_REGISTERS, REG_MIN_SOC, REG_MAX_SOC,
 )
-from .tcp_client import SunpuraBatteryClient
+from .tcp_client import LunergyBatteryClient
 
 _LOGGER = logging.getLogger(__name__)
+
+# ── Unified field mapping ─────────────────────────────────────────────────────
+# Maps canonical sensor keys to (source, field_name, scale) tuples.
+# Storage_list is tried first (Lunergy), then SSumInfoList (Lunergy fallback).
+# Storage_list power values are 10x scaled; SSumInfoList values are in watts.
+# ──────────────────────────────────────────────────────────────────────────────
+
+_FIELD_MAP: Dict[str, List[Tuple[str, str, float]]] = {
+    "battery_soc": [
+        ("storage", "BatterySoc", 1.0),
+        ("summary", "AverageBatteryAverageSOC", 1.0),
+    ],
+    "ac_charging_power": [
+        ("storage", "AcChargingPower", 0.1),
+        ("summary", "TotalACChargePower", 1.0),
+    ],
+    "battery_discharging_power": [
+        ("storage", "BatteryDischargingPower", 0.1),
+        ("summary", "TotalBatteryOutputPower", 1.0),
+    ],
+    "battery_charging_power": [
+        ("storage", "BatteryChargingPower", 0.1),
+        ("summary", "TotalACChargePower", 1.0),
+    ],
+    "pv_power": [
+        ("storage", "PvChargingPower", 0.1),
+        ("summary", "TotalPVPower", 1.0),
+    ],
+    "pv_charging_power": [
+        ("storage", "PvChargingPower", 0.1),
+        ("summary", "TotalPVChargePower", 1.0),
+    ],
+    "grid_power": [
+        ("storage", "AcInActivePower", 0.1),
+        ("summary", "MeterTotalActivePower", 1.0),
+    ],
+    "grid_export_power": [
+        ("summary", "TotalGridOutputPower", 1.0),
+    ],
+    "backup_power": [
+        ("storage", "OffGridLoadPower", 0.1),
+        ("summary", "TotalBackUpPower", 1.0),
+    ],
+    "home_consumption": [
+        ("summary", "TotalSmartLoadElectricalPower", 1.0),
+    ],
+}
 
 # ── Register map (confirmed from live scan) ───────────────────────────────────
 # 3000  EMS enable           1 = on
@@ -43,9 +90,9 @@ def _now_hhmm() -> str:
     return datetime.now().strftime("%H:%M")
 
 
-class SunpuraLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
+class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
-    def __init__(self, hass: HomeAssistant, client: SunpuraBatteryClient,
+    def __init__(self, hass: HomeAssistant, client: LunergyBatteryClient,
                  device_name: str, poll_interval: int = POLL_INTERVAL) -> None:
         self.client = client
         self.device_name = device_name
@@ -68,8 +115,7 @@ class SunpuraLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
         valid = (
             raw is not None
-            and raw.get("Storage_list")
-            and raw.get("SSumInfoList")
+            and (raw.get("Storage_list") or raw.get("SSumInfoList"))
         )
 
         if not valid:
@@ -122,6 +168,25 @@ class SunpuraLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     def summary_val(self, key: str, default: Any = None) -> Any:
         return self.summary.get(key, default)
 
+    def get_value(self, canonical_key: str, default: Any = None) -> Any:
+        """Get a sensor value using the canonical key.
+
+        Tries Storage_list first (Lunergy), falls back to SSumInfoList (Lunergy).
+        Applies the correct scaling per source automatically.
+        """
+        entries = _FIELD_MAP.get(canonical_key)
+        if not entries:
+            return default
+        for source, field, scale in entries:
+            container = self.storage if source == "storage" else self.summary
+            val = container.get(field)
+            if val is not None:
+                try:
+                    return round(float(val) * scale, 1)
+                except (TypeError, ValueError):
+                    continue
+        return default
+
     # ── Power setpoint ─────────────────────────────────────────────────────────
 
     async def async_set_power_setpoint(self, watts: float) -> bool:
@@ -150,7 +215,7 @@ class SunpuraLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         }
 
         _LOGGER.info(
-            "Sunpura SET power %+d W → reg_power=%+d → 3003=%r",
+            "Lunergy SET power %+d W → reg_power=%+d → 3003=%r",
             power_w, reg_power, slot1,
         )
 
@@ -207,4 +272,4 @@ class SunpuraLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             "non_empty_registers": all_results,
             "all_batches": raw_batches,
         }
-        _LOGGER.info("Sunpura register scan: %s", all_results)
+        _LOGGER.info("Lunergy register scan: %s", all_results)

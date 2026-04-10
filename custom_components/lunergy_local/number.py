@@ -9,16 +9,16 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import CONF_HOST, CONF_NAME, CONF_PORT, DOMAIN, MAX_BATTERY_POWER_W
-from .coordinator import SunpuraLocalCoordinator
+from .coordinator import LunergyLocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry,
                             async_add_entities: AddEntitiesCallback) -> None:
-    coordinator: SunpuraLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([SunpuraPowerSetpoint(coordinator, config_entry)])
+    coordinator: LunergyLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    async_add_entities([LunergyPowerSetpoint(coordinator, config_entry)])
 
-class SunpuraPowerSetpoint(CoordinatorEntity[SunpuraLocalCoordinator], NumberEntity):
+class LunergyPowerSetpoint(CoordinatorEntity[LunergyLocalCoordinator], NumberEntity):
     """Battery power setpoint: +2400 W = full charge, -2400 W = full discharge."""
     _attr_has_entity_name = True
     _attr_name = "Power Setpoint"
@@ -41,7 +41,7 @@ class SunpuraPowerSetpoint(CoordinatorEntity[SunpuraLocalCoordinator], NumberEnt
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self._config_entry.data[CONF_HOST]}:{self._config_entry.data[CONF_PORT]}")},
             name=self._config_entry.data[CONF_NAME],
-            manufacturer="Mathieu", model="EMS Battery Hub for Sunpura",
+            manufacturer="Lunergy", model="Hub 2400 AC",
         )
 
     @property

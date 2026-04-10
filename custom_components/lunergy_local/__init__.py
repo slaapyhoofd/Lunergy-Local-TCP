@@ -1,4 +1,4 @@
-"""Sunpura Battery – local TCP integration for Home Assistant."""
+"""Lunergy Battery – local TCP integration for Home Assistant."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import CONF_HOST, CONF_NAME, CONF_PORT, DEFAULT_TIMEOUT, DOMAIN
-from .coordinator import SunpuraLocalCoordinator
-from .tcp_client import SunpuraBatteryClient
+from .coordinator import LunergyLocalCoordinator
+from .tcp_client import LunergyBatteryClient
 from .tcp_manager import TCPClientManager
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.NUMBER]
+PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SWITCH, Platform.SELECT]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -25,13 +25,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     port: int = entry.data[CONF_PORT]
     name: str = entry.data[CONF_NAME]
 
-    client = SunpuraBatteryClient(host, port, timeout=DEFAULT_TIMEOUT)
+    client = LunergyBatteryClient(host, port, timeout=DEFAULT_TIMEOUT)
     try:
         await client.async_connect()
     except Exception as exc:
         raise ConfigEntryNotReady(f"Cannot connect to {host}:{port} – {exc}") from exc
 
-    coordinator = SunpuraLocalCoordinator(hass, client, name)
+    coordinator = LunergyLocalCoordinator(hass, client, name)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -60,7 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _LOGGER.error("try_command: 'payload' is not valid JSON: %s", raw_payload)
                     return
 
-        _LOGGER.warning("Sunpura try_command → %s %s  payload=%s", direction, command, payload)
+        _LOGGER.warning("Lunergy try_command → %s %s  payload=%s", direction, command, payload)
 
         if direction.lower() == "set":
             resp = await coordinator.client.send_set(command, payload or None)
@@ -68,14 +68,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             resp = await coordinator.client.send_get(command, payload or None)
 
         coordinator._last_set_response = resp
-        _LOGGER.warning("Sunpura try_command ← %s", resp)
+        _LOGGER.warning("Lunergy try_command ← %s", resp)
         await coordinator.async_request_refresh()
 
     async def handle_read_registers(call: ServiceCall) -> None:
         addresses = call.data.get("addresses", [])
         if not addresses:
             return
-        _LOGGER.warning("Sunpura read_registers → %s", addresses)
+        _LOGGER.warning("Lunergy read_registers → %s", addresses)
         resp = await coordinator.client.get_control_parameters(addresses)
         info = (resp or {}).get("ControlInfo") or {}
         coordinator._register_scan = {
@@ -83,7 +83,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "non_empty": {k: v for k, v in info.items() if str(v).strip() not in ("", "0", "None")},
             "raw": resp,
         }
-        _LOGGER.warning("Sunpura read_registers ← ControlInfo=%s", info)
+        _LOGGER.warning("Lunergy read_registers ← ControlInfo=%s", info)
         await coordinator.async_request_refresh()
 
     async def handle_set_raw_register(call: ServiceCall) -> None:
@@ -91,17 +91,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         value   = str(call.data.get("value",   "")).strip()
         if not address or not value:
             return
-        _LOGGER.warning("Sunpura set_raw_register → [%s]=%r", address, value)
+        _LOGGER.warning("Lunergy set_raw_register → [%s]=%r", address, value)
         resp = await coordinator.client.set_control_parameters({address: value})
         coordinator._last_set_response = resp
-        _LOGGER.warning("Sunpura set_raw_register ← %s", resp)
+        _LOGGER.warning("Lunergy set_raw_register ← %s", resp)
         await coordinator.async_request_refresh()
 
     async def handle_scan_power_registers(call) -> None:
         """Scan registers 3000-3150 and 4000-4050 for non-zero values."""
-        _LOGGER.warning("Sunpura scanning registers for non-zero power values ...")
+        _LOGGER.warning("Lunergy scanning registers for non-zero power values ...")
         await coordinator.async_scan_power_registers()
-        _LOGGER.warning("Sunpura scan done — check register_scan sensor attributes.")
+        _LOGGER.warning("Lunergy scan done — check register_scan sensor attributes.")
 
     hass.services.async_register(DOMAIN, "scan_power_registers", handle_scan_power_registers)
 
@@ -125,12 +125,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for cmd, payload in candidates:
             resp = await coordinator.client.send_set(cmd, payload)
             results[cmd] = resp
-            _LOGGER.warning("Sunpura probe_fast_command [%s] → %s", cmd, resp)
+            _LOGGER.warning("Lunergy probe_fast_command [%s] → %s", cmd, resp)
             import asyncio
             await asyncio.sleep(0.5)
 
         coordinator._last_set_response = {"probe_results": results}
-        _LOGGER.warning("Sunpura probe_fast_command complete: %s", results)
+        _LOGGER.warning("Lunergy probe_fast_command complete: %s", results)
 
     hass.services.async_register(DOMAIN, "probe_fast_command", handle_probe_fast_command)
     hass.services.async_register(DOMAIN, "try_command",        handle_try_command)
@@ -138,7 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "set_raw_register",   handle_set_raw_register)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-    _LOGGER.info("Sunpura Local Battery '%s' set up at %s:%s", name, host, port)
+    _LOGGER.info("Lunergy Local Battery '%s' set up at %s:%s", name, host, port)
     return True
 
 
@@ -149,7 +149,7 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        coordinator: SunpuraLocalCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator: LunergyLocalCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.client.async_disconnect()
         TCPClientManager.remove_instance(entry.data[CONF_HOST], entry.data[CONF_PORT])
     return unloaded

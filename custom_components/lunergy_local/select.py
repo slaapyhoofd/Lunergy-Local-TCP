@@ -1,4 +1,4 @@
-"""Select platform – battery work mode for Sunpura Local Battery."""
+"""Select platform – battery work mode for Lunergy Local Battery."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_HOST, CONF_NAME, CONF_PORT, DOMAIN, WORK_MODES
-from .coordinator import SunpuraLocalCoordinator
+from .coordinator import LunergyLocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,11 +22,11 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: SunpuraLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([SunpuraWorkModeSelect(coordinator, config_entry)])
+    coordinator: LunergyLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    async_add_entities([LunergyWorkModeSelect(coordinator, config_entry)])
 
 
-class SunpuraWorkModeSelect(CoordinatorEntity[SunpuraLocalCoordinator], SelectEntity):
+class LunergyWorkModeSelect(CoordinatorEntity[LunergyLocalCoordinator], SelectEntity):
     """Dropdown to switch the battery between Self-Consumption, Custom, and Disabled."""
 
     _attr_icon = "mdi:battery-sync"
@@ -36,7 +36,7 @@ class SunpuraWorkModeSelect(CoordinatorEntity[SunpuraLocalCoordinator], SelectEn
 
     def __init__(
         self,
-        coordinator: SunpuraLocalCoordinator,
+        coordinator: LunergyLocalCoordinator,
         config_entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator)
@@ -52,8 +52,8 @@ class SunpuraWorkModeSelect(CoordinatorEntity[SunpuraLocalCoordinator], SelectEn
         return DeviceInfo(
             identifiers={(DOMAIN, f"{host}:{port}")},
             name=name,
-            manufacturer="Mathieu",
-            model="EMS Battery Hub for Sunpura",
+            manufacturer="Lunergy",
+            model="Hub 2400 AC",
         )
 
     @property

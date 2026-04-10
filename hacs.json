@@ -1,7 +1,7 @@
 {
-  "name": "Sunpura Local TCP Control",
-  "domain": "sunpura_local",
-  "documentation": "https://github.com/Mathieuleysen/Sunpura-Local-TCP",
+  "name": "Lunergy Local TCP Control",
+  "domain": "lunergy_local",
+  "documentation": "https://github.com/slaapyhoofd/Lunergy-Local-TCP",
   "homeassistant": "2024.1.0",
   "iot_class": "local_polling"
 }

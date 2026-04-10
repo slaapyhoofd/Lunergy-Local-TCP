@@ -1,4 +1,4 @@
-"""Switch platform – EMS master enable/disable for Sunpura Local Battery."""
+"""Switch platform – EMS master enable/disable for Lunergy Local Battery."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_HOST, CONF_NAME, CONF_PORT, DOMAIN, REG_EMS_ENABLE
-from .coordinator import SunpuraLocalCoordinator
+from .coordinator import LunergyLocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,11 +22,11 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: SunpuraLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([SunpuraEmsSwitch(coordinator, config_entry)])
+    coordinator: LunergyLocalCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    async_add_entities([LunergyEmsSwitch(coordinator, config_entry)])
 
 
-class SunpuraEmsSwitch(CoordinatorEntity[SunpuraLocalCoordinator], SwitchEntity):
+class LunergyEmsSwitch(CoordinatorEntity[LunergyLocalCoordinator], SwitchEntity):
     """Master EMS on/off switch — mirrors ControlEnableStatus (register 3000)."""
 
     _attr_icon = "mdi:battery-sync"
@@ -35,7 +35,7 @@ class SunpuraEmsSwitch(CoordinatorEntity[SunpuraLocalCoordinator], SwitchEntity)
 
     def __init__(
         self,
-        coordinator: SunpuraLocalCoordinator,
+        coordinator: LunergyLocalCoordinator,
         config_entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator)
@@ -51,8 +51,8 @@ class SunpuraEmsSwitch(CoordinatorEntity[SunpuraLocalCoordinator], SwitchEntity)
         return DeviceInfo(
             identifiers={(DOMAIN, f"{host}:{port}")},
             name=name,
-            manufacturer="Mathieu",
-            model="EMS Battery Hub for Sunpura",
+            manufacturer="Lunergy",
+            model="Hub 2400 AC",
         )
 
     @property

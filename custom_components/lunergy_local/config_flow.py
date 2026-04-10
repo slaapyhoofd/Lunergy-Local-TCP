@@ -1,4 +1,4 @@
-"""Config flow for Sunpura Local Battery integration."""
+"""Config flow for Lunergy Local Battery integration."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ STEP_SCHEMA = vol.Schema(
 )
 
 
-class SunpuraLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class LunergyLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the initial configuration step."""
 
     VERSION = 1
@@ -39,9 +39,9 @@ class SunpuraLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
-    ) -> "SunpuraLocalOptionsFlow":
+    ) -> "LunergyLocalOptionsFlow":
         """Return the options flow so the user can change IP/port later."""
-        return SunpuraLocalOptionsFlow(config_entry)
+        return LunergyLocalOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -70,7 +70,7 @@ class SunpuraLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
-class SunpuraLocalOptionsFlow(config_entries.OptionsFlow):
+class LunergyLocalOptionsFlow(config_entries.OptionsFlow):
     """Allow the user to update host/port/name without removing the entry."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:

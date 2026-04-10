@@ -1,4 +1,4 @@
-"""Sunpura battery TCP protocol client."""
+"""Lunergy battery TCP protocol client."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 _GET_TIMEOUT = 10
 
 
-class SunpuraBatteryClient:
+class LunergyBatteryClient:
 
     def __init__(self, host: str, port: int, timeout: float = 5.0) -> None:
         self.host = host
