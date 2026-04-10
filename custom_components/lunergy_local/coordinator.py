@@ -100,6 +100,8 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.firmware_version: str | None = None
         self._commanded_power: int = 0
         self._commanded_direction: str = "Idle"
+        self.initial_min_soc: int | None = None
+        self.initial_max_soc: int | None = None
         super().__init__(
             hass, _LOGGER,
             name=f"{DOMAIN}_{device_name}",
@@ -281,6 +283,38 @@ class LunergyLocalCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         resp = await self.client.set_control_parameters({"3024": str(value)})
         self._last_set_response = resp
         return resp is not None
+
+    # ── Initial state read ──────────────────────────────────────────────────
+
+    async def async_read_initial_state(self) -> None:
+        """Read current SOC limits from registers 3023/3024 at startup."""
+        resp = await self.client.get_control_parameters([3023, 3024])
+        if resp is None:
+            return
+        params = (
+            resp.get("ControlInfo")
+            or resp.get("GetParameters")
+            or resp.get("Parameters")
+            or {}
+        )
+        if not isinstance(params, dict):
+            return
+
+        min_soc = params.get("3023") or params.get(3023)
+        max_soc = params.get("3024") or params.get(3024)
+
+        if min_soc is not None:
+            try:
+                self.initial_min_soc = int(min_soc)
+                _LOGGER.info("Read initial min SOC: %d%%", self.initial_min_soc)
+            except (TypeError, ValueError):
+                pass
+        if max_soc is not None:
+            try:
+                self.initial_max_soc = int(max_soc)
+                _LOGGER.info("Read initial max SOC: %d%%", self.initial_max_soc)
+            except (TypeError, ValueError):
+                pass
 
     # ── DeviceManagement probe ────────────────────────────────────────────────
 

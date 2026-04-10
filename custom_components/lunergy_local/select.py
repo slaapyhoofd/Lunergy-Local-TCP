@@ -84,7 +84,19 @@ class LunergyBatteryDirection(CoordinatorEntity[LunergyLocalCoordinator], Select
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_battery_direction"
-        self._current_direction: str = "Idle"
+        # Derive initial direction from current battery state
+        charge = coordinator.get_value("battery_charging_power") or 0
+        discharge = coordinator.get_value("battery_discharging_power") or 0
+        try:
+            if float(charge) > 0:
+                self._current_direction = "Charge"
+            elif float(discharge) > 0:
+                self._current_direction = "Discharge"
+            else:
+                self._current_direction = "Idle"
+        except (TypeError, ValueError):
+            self._current_direction = "Idle"
+        coordinator._commanded_direction = self._current_direction
 
     @property
     def device_info(self) -> DeviceInfo:

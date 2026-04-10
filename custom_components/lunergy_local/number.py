@@ -88,19 +88,15 @@ class LunergyMinSoc(CoordinatorEntity[LunergyLocalCoordinator], NumberEntity):
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_min_soc"
-        self._commanded: float | None = None
+        self._commanded: float = coordinator.initial_min_soc if coordinator.initial_min_soc is not None else 10
 
     @property
     def device_info(self) -> DeviceInfo:
         return self.coordinator.device_info
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float:
         return self._commanded
-
-    @property
-    def available(self) -> bool:
-        return self.coordinator.last_update_success or self._commanded is not None
 
     async def async_set_native_value(self, value: float) -> None:
         soc = int(value)
@@ -128,14 +124,14 @@ class LunergyMaxSoc(CoordinatorEntity[LunergyLocalCoordinator], NumberEntity):
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._attr_unique_id = f"{config_entry.entry_id}_max_soc"
-        self._commanded: float | None = None
+        self._commanded: float = coordinator.initial_max_soc if coordinator.initial_max_soc is not None else 98
 
     @property
     def device_info(self) -> DeviceInfo:
         return self.coordinator.device_info
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float:
         return self._commanded
 
     @property

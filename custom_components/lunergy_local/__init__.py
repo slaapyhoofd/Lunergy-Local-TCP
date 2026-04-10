@@ -33,7 +33,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = LunergyLocalCoordinator(hass, client, name)
     await coordinator.async_config_entry_first_refresh()
 
-    # Probe DeviceManagement for serial/firmware (works on Sunpura, skips on Lunergy)
+    # Read initial register state and probe DeviceManagement
+    await coordinator.async_read_initial_state()
     await coordinator.async_probe_device_management()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
