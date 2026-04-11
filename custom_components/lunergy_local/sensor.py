@@ -28,7 +28,6 @@ _SENSORS = [
     ("pv_power",                    "PV Power",                  "pv_power",                   UnitOfPower.WATT, "mdi:solar-power",               True),
     ("pv_charging_power",           "PV Charging Power",         "pv_charging_power",          UnitOfPower.WATT, "mdi:solar-panel",               True),
     ("grid_power",                  "Grid / Meter Power",        "grid_power",                 UnitOfPower.WATT, "mdi:transmission-tower",        True),
-    ("grid_export_power",           "Grid Export Power",         "grid_export_power",          UnitOfPower.WATT, "mdi:transmission-tower-export", True),
     ("backup_power",                "Backup Power",              "backup_power",               UnitOfPower.WATT, "mdi:power-plug-battery",        True),
     ("home_consumption",            "Home Consumption",          "home_consumption",           UnitOfPower.WATT, "mdi:home-lightning-bolt",       True),
 ]
@@ -60,7 +59,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry,
             LunergyEnergySensor(coordinator, config_entry, key, name, power_keys, icon)
         )
 
-    # Battery Power (signed) and Battery Status
+    # Derived sensors
+    entities.append(LunergyGridExportSensor(coordinator, config_entry))
     entities.append(LunergyBatteryPowerSensor(coordinator, config_entry))
     entities.append(LunergyBatteryStatusSensor(coordinator, config_entry))
 
@@ -177,6 +177,39 @@ class LunergyEnergySensor(CoordinatorEntity[LunergyLocalCoordinator], RestoreEnt
         self.async_write_ha_state()
 
 
+# ── Grid Export Power (derived) ───────────────────────────────────────────────
+
+class LunergyGridExportSensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
+    """Grid export power derived from grid_power. Export = positive grid values only."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Grid Export Power"
+    _attr_icon = "mdi:transmission-tower-export"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_grid_export_power"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self.coordinator.device_info
+
+    @property
+    def native_value(self) -> float | None:
+        grid = self.coordinator.get_value("grid_power")
+        if grid is None:
+            return None
+        try:
+            # AECC sign convention: negative = importing, positive = exporting
+            return max(0, round(float(grid), 1))
+        except (TypeError, ValueError):
+            return None
+
+
 # ── Battery Power (signed) ────────────────────────────────────────────────────
 
 class LunergyBatteryPowerSensor(CoordinatorEntity[LunergyLocalCoordinator], SensorEntity):
@@ -201,9 +234,13 @@ class LunergyBatteryPowerSensor(CoordinatorEntity[LunergyLocalCoordinator], Sens
     @property
     def native_value(self) -> float | None:
         charge = self.coordinator.get_value("battery_charging_power") or 0
+        ac_charge = self.coordinator.get_value("ac_charging_power") or 0
         discharge = self.coordinator.get_value("battery_discharging_power") or 0
         try:
-            return round(float(charge) - float(discharge), 1)
+            # Use whichever charging value is higher — in AI mode,
+            # BatteryChargingPower stays 0 while AcChargingPower reports correctly.
+            effective_charge = max(float(charge), float(ac_charge))
+            return round(effective_charge - float(discharge), 1)
         except (TypeError, ValueError):
             return None
 
@@ -230,16 +267,19 @@ class LunergyBatteryStatusSensor(CoordinatorEntity[LunergyLocalCoordinator], Sen
     @property
     def native_value(self) -> str:
         charge = self.coordinator.get_value("battery_charging_power")
+        ac_charge = self.coordinator.get_value("ac_charging_power")
         discharge = self.coordinator.get_value("battery_discharging_power")
-        # If both are None, keep last known status (transient poll failure)
-        if charge is None and discharge is None:
+        # If all are None, keep last known status (transient poll failure)
+        if charge is None and ac_charge is None and discharge is None:
             return self._last_status
         try:
             charge_f = float(charge or 0)
+            ac_charge_f = float(ac_charge or 0)
             discharge_f = float(discharge or 0)
         except (TypeError, ValueError):
             return self._last_status
-        if charge_f > 0:
+        # In AI mode, BatteryChargingPower stays 0 while AcChargingPower reports correctly
+        if charge_f > 0 or ac_charge_f > 0:
             status = "Charging"
         elif discharge_f > 0:
             status = "Discharging"
