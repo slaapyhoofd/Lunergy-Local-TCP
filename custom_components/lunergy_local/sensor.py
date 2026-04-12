@@ -30,6 +30,8 @@ _SENSORS = [
     ("grid_power",                  "Grid / Meter Power",        "grid_power",                 UnitOfPower.WATT, "mdi:transmission-tower",        True),
     ("backup_power",                "Backup Power",              "backup_power",               UnitOfPower.WATT, "mdi:power-plug-battery",        True),
     ("home_consumption",            "Home Consumption",          "home_consumption",           UnitOfPower.WATT, "mdi:home-lightning-bolt",       True),
+    ("pv1_power",                   "PV String 1 Power",         "pv1_power",                  UnitOfPower.WATT, "mdi:solar-panel",               True),
+    ("pv2_power",                   "PV String 2 Power",         "pv2_power",                  UnitOfPower.WATT, "mdi:solar-panel",               True),
 ]
 
 # ── Energy counter definitions ────────────────────────────────────────────────
@@ -37,6 +39,7 @@ _SENSORS = [
 _ENERGY_SENSORS = [
     ("energy_charged",    "Energy Charged",    ["ac_charging_power", "pv_charging_power"], "mdi:battery-charging"),
     ("energy_discharged", "Energy Discharged",  ["battery_discharging_power"],              "mdi:battery-arrow-down-outline"),
+    ("energy_generated",  "Energy Generated",   ["pv_power"],                               "mdi:solar-power"),
 ]
 
 _MAX_GAP_SECONDS = 60  # Skip accumulation if time gap exceeds this (avoids phantom spikes)

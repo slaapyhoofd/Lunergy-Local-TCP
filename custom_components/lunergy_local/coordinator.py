@@ -43,12 +43,12 @@ _FIELD_MAP: Dict[str, List[Tuple[str, str, float]]] = {
         ("summary", "TotalACChargePower", 1.0),
     ],
     "pv_power": [
-        ("storage", "PvChargingPower", 0.1),
         ("summary", "TotalPVPower", 1.0),
+        ("storage", "PvChargingPower", 0.1),
     ],
     "pv_charging_power": [
-        ("storage", "PvChargingPower", 0.1),
         ("summary", "TotalPVChargePower", 1.0),
+        ("storage", "PvChargingPower", 0.1),
     ],
     "grid_power": [
         ("summary", "MeterTotalActivePower", 1.0),
@@ -61,6 +61,12 @@ _FIELD_MAP: Dict[str, List[Tuple[str, str, float]]] = {
     ],
     "home_consumption": [
         ("summary", "TotalSmartLoadElectricalPower", 1.0),
+    ],
+    "pv1_power": [
+        ("storage", "Pv1Power", 1.0),
+    ],
+    "pv2_power": [
+        ("storage", "Pv2Power", 1.0),
     ],
 }
 
